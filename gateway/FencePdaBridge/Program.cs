@@ -49,7 +49,7 @@ IResult Fail(ResultException e) => Results.Json(new { ok = false, error = e.Mess
 // ---------------- pairing (senza token: serve il codice monouso del QR) ----------------
 app.MapPost("/api/v1/pair", (PairRequest req) =>
 {
-    if (!System.Text.RegularExpressions.Regex.IsMatch(req.DeviceId ?? "", "^FENCEPDA-[0-9A-F]{8}$"))
+    if (!System.Text.RegularExpressions.Regex.IsMatch(req.DeviceId ?? "", "^PDA-[0-9A-F]{6}$"))
         return Results.Json(new { ok = false, error = "Identificativo PDA non valido" }, statusCode: 422);
     if (!store.ConsumePairCode(req.Code))
         return Results.Json(new { ok = false, error = "Codice di associazione non valido, scaduto o gia' usato" }, statusCode: 403);
