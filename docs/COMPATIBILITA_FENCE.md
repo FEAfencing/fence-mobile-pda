@@ -4,7 +4,7 @@
 | Operazione | Tabella | Come |
 |---|---|---|
 | Registra il telefono | `Pda` | `INSERT (Mobile)` se assente |
-| Trova l'arbitro | `Mobiles` | sola lettura, `WHERE Mobile = <FENCEPDA-…>` |
+| Trova l'arbitro | `Mobiles` | sola lettura, `WHERE Mobile = <PDA-…>` |
 | Legge gli incontri | `Gironi4Mobile` ⨝ `Mobiles` | stessa query di `frmTxRx4Pda` |
 | Scrive il risultato | `Gironi4Mobile` | `Ris1..Ris7`, `Eseguito` (0 parziale / 1 chiuso), chiave `Flags+MaschioFemmina+Categoria+Girone+ED+Ordine` |
 | Firma | `Gironi4Mobile.Firma` | JPEG |

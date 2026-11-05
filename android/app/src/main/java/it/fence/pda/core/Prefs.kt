@@ -10,8 +10,10 @@ class Prefs(ctx: Context) {
     val deviceId: String
         get() {
             var id = sp.getString("deviceId", null)
-            if (id == null) {
-                id = "FENCEPDA-" + UUID.randomUUID().toString().replace("-", "").take(8).uppercase()
+            // Pda.Mobile in Fence! e' varchar(10): l'identificativo deve stare in 10 caratteri ("PDA-" + 6 esadecimali).
+            // Un vecchio formato (es. FENCEPDA-XXXXXXXX) viene rigenerato.
+            if (id == null || !Regex("^PDA-[0-9A-F]{6}$").matches(id)) {
+                id = "PDA-" + UUID.randomUUID().toString().replace("-", "").take(6).uppercase()
                 sp.edit().putString("deviceId", id).apply()
             }
             return id
