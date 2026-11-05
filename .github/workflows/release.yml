@@ -1,0 +1,134 @@
+name: Release
+
+# Si attiva pubblicando un tag, ad esempio:  git tag v1.0.0 && git push origin v1.0.0
+# Nessun GitHub Actions Artifact: ogni job allega i propri file direttamente alla GitHub Release.
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+jobs:
+  create-release:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Crea la Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.ref_name }}
+          name: Fence! Mobile PDA ${{ github.ref_name }}
+          generate_release_notes: true
+          body: |
+            **Windows** — `FencePdaBridge-Setup.exe` (installer guidato) oppure `FencePdaBridge.exe` (autonomo, `--install` per registrare il servizio).
+            **Android** — `FencePDA-Android-arm64.apk` (telefoni a 64 bit, consigliato) oppure `FencePDA-Android-universal.apk`.
+            **Documentazione** — `FencePDA-Documentazione.zip`.
+
+  gateway:
+    needs: create-release
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '8.0.x'
+
+      - name: Versione dal tag
+        shell: pwsh
+        run: |
+          $v = '${{ github.ref_name }}'.TrimStart('v')
+          "APP_VERSION=$v" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+
+      - name: Test del gateway
+        run: dotnet test gateway/FencePdaBridge.sln -c Release
+
+      - name: Pubblica FencePdaBridge.exe (autonomo, win-x64)
+        run: >
+          dotnet publish gateway/FencePdaBridge/FencePdaBridge.csproj -c Release -r win-x64 --self-contained true
+          -p:PublishSingleFile=true -p:IncludeNativeLibrariesForSelfExtract=true -p:EnableCompressionInSingleFile=true
+          -p:DebugType=none -p:Version=${{ env.APP_VERSION }} -o dist
+
+      - name: Compila l'installer (Inno Setup)
+        shell: pwsh
+        run: |
+          if (-not (Get-Command iscc -ErrorAction SilentlyContinue) -and -not (Test-Path "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe")) {
+            choco install innosetup -y --no-progress
+          }
+          $iscc = "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe"
+          & $iscc "/DAppVersion=${{ env.APP_VERSION }}" installer\FencePdaBridge.iss
+          if ($LASTEXITCODE -ne 0) { throw "ISCC fallito" }
+
+      - name: Pacchetto documentazione
+        shell: pwsh
+        run: Compress-Archive -Path docs\*.md, README.md, installer\config\grant-sql-access.sql -DestinationPath dist\FencePDA-Documentazione.zip
+
+      - name: Allega alla Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.ref_name }}
+          files: |
+            dist/FencePdaBridge.exe
+            dist/FencePdaBridge-Setup.exe
+            dist/FencePDA-Documentazione.zip
+
+  android:
+    needs: create-release
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.9'
+
+      - name: Chiave di firma stabile (GitHub Secrets)
+        env:
+          KS_B64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          KS_PASS: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          KEY_PASS: ${{ secrets.ANDROID_KEY_PASSWORD }}
+        run: |
+          if [ -z "$KS_B64" ] || [ -z "$KS_PASS" ] || [ -z "$KEY_ALIAS" ] || [ -z "$KEY_PASS" ]; then
+            echo "::error::Mancano i secrets ANDROID_KEYSTORE_BASE64, ANDROID_KEYSTORE_PASSWORD, ANDROID_KEY_ALIAS, ANDROID_KEY_PASSWORD (vedi docs/INSTALLAZIONE.md). Gli APK non vengono firmati con chiavi temporanee."
+            exit 1
+          fi
+          echo "$KS_B64" | base64 -d > "$RUNNER_TEMP/release.keystore"
+          echo "FENCE_KEYSTORE=$RUNNER_TEMP/release.keystore" >> "$GITHUB_ENV"
+          echo "FENCE_KEYSTORE_PASSWORD=$KS_PASS" >> "$GITHUB_ENV"
+          echo "FENCE_KEY_ALIAS=$KEY_ALIAS" >> "$GITHUB_ENV"
+          echo "FENCE_KEY_PASSWORD=$KEY_PASS" >> "$GITHUB_ENV"
+
+      - name: Test e build degli APK
+        working-directory: android
+        run: |
+          VER="${GITHUB_REF_NAME#v}"
+          gradle --no-daemon testReleaseUnitTest assembleRelease -PappVersionName="$VER" -PappVersionCode="${{ github.run_number }}"
+
+      - name: Nomi dei file
+        run: |
+          mkdir -p dist
+          OUT=android/app/build/outputs/apk/release
+          cp "$OUT/app-universal-release.apk" dist/FencePDA-Android-universal.apk
+          if [ -f "$OUT/app-arm64-v8a-release.apk" ]; then
+            cp "$OUT/app-arm64-v8a-release.apk" dist/FencePDA-Android-arm64.apk
+          else
+            # l'app non contiene codice nativo: l'APK universale e' gia' valido su arm64
+            echo "::notice::Nessuno split ABI generato (app senza librerie native): arm64 = universale"
+            cp "$OUT/app-universal-release.apk" dist/FencePDA-Android-arm64.apk
+          fi
+          ls -l dist
+
+      - name: Allega alla Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.ref_name }}
+          files: |
+            dist/FencePDA-Android-universal.apk
+            dist/FencePDA-Android-arm64.apk
